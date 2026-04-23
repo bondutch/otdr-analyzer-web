@@ -1,8 +1,17 @@
 /**
- * OTDR Report Parser v8.3 - Web Edition
+ * OTDR Report Parser v8.4 - Web Edition
  * Complete port of Python OTDR Analyzer v8.0 parsing engine.
  * Supports: VIAVI (dual, single, compiled), EXFO (legacy, FTBx, iOLM),
  *           Anritsu MT9083, Anritsu MT9085 (dual + compiled single-wavelength)
+ *
+ * v8.4 Changes:
+ * - Fixed VIAVI SmartOTDR vertical fallback: accept negative fiber_end values
+ *   (short fiber runs with negative distance offsets)
+ * - Fixed VIAVI event table wavelength detection for pdf.js vertical layout
+ *   where "EXPERT" and "1310nm" appear on separate lines
+ * - Added fiber_end_ft from Fiber End markers (e.g., "385.91 ft") as fallback
+ *   when summary fiber_end is negative
+ * - Improved event data parsing for pdf.js vertical layout with tilde prefixes
  *
  * v8.3 Changes (synced from Python v8.0):
  * - Added mid-line wavelength patterns for VIAVI (filename text before wavelength)
@@ -411,8 +420,9 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
         const orl = parseFloat(orlStr);
         const fiberEnd = parseFloat(fiberEndStr);
         if (isNaN(loss) || isNaN(orl) || isNaN(fiberEnd)) continue;
-        // Validate: ORL should be > 10 and fiber end > 10 (sanity check to avoid false matches)
-        if (orl < 10 || fiberEnd < 10) continue;
+        // Validate: ORL should be > 10 (sanity check to avoid false matches)
+        // fiberEnd can be negative for SmartOTDR short runs with negative distance offsets
+        if (orl < 10) continue;
         // Find event count: scan forward for standalone small number
         // The pattern after fiber_end is: direction lines (may wrap), avg_loss, event_count
         // We want the LAST standalone 1-2 digit number before Alarms/section marker
@@ -458,6 +468,21 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
       const wlMatch2 = pageText.match(/OTDR\n(\d{4})nm/);
       if (wlMatch2) wavelength = parseInt(wlMatch2[1]);
     }
+    // pdf.js vertical with split: "EXPERT\n1310nm\n5ns" or just standalone "1310nm" or "1550nm"
+    if (!wavelength) {
+      const wlMatch3 = pageText.match(/(?:EXPERT|SMART|FTTA|OTDR)\n(\d{4})nm/);
+      if (wlMatch3) wavelength = parseInt(wlMatch3[1]);
+    }
+    // Last resort: find standalone "1310nm" or "1550nm" on its own line within Test Setup section
+    if (!wavelength) {
+      const testSetupIdx = pageText.indexOf('Test Setup');
+      const summaryIdx = pageText.indexOf('Summary');
+      if (testSetupIdx >= 0 && summaryIdx > testSetupIdx) {
+        const setupBlock = pageText.substring(testSetupIdx, summaryIdx);
+        const wlMatch4 = setupBlock.match(/^(\d{4})nm$/m);
+        if (wlMatch4) wavelength = parseInt(wlMatch4[1]);
+      }
+    }
     if (!wavelength) continue;
 
     const eventReflPairs: [number, number][] = [];
@@ -493,7 +518,7 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
     }
 
     // pdf.js vertical event table fallback
-    // Pattern: "Event\nDistance\nLoss\nReflect.\n...\n1\n0.00\n-0.001\n-56.88\n..."
+    // Pattern: "Event\nDistance\nLoss\nReflect.\n...\n1\n-3279.90\n~ 0.323\n~\n0.00\n2\n..."
     if (eventReflPairs.length === 0) {
       let inEvt = false;
       let evtDataValues: string[] = [];
@@ -504,9 +529,12 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
           if (l.startsWith('Page') || l === '') break;
           // Skip header labels and units
           if (/^(Distance|Loss|Reflect\.|Slope|Section|T\. Loss|ft|dB|dB\/km)$/.test(l)) continue;
-          // Collect data values
-          if (/^[\d.\->]+$/.test(l) || l === 'End' || /^>?-[\d.]+$/.test(l)) {
-            evtDataValues.push(l);
+          // Collect data values: numbers, negative numbers, tilde-prefixed, "End"
+          // Clean tilde prefix: "~ 0.323" -> "0.323", standalone "~" -> skip
+          if (l === '~') continue;
+          const cleaned = l.replace(/^~\s*/, '').replace(/^>\s*/, '');
+          if (/^-?[\d.]+$/.test(cleaned) || l === 'End') {
+            evtDataValues.push(cleaned);
           }
         }
       }
@@ -532,8 +560,27 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
     }
 
     const highestRefl = filterReflectancePairs(eventReflPairs);
-    if (wavelength === 1310 && report.results_1310) report.results_1310.highest_reflectance_db = highestRefl;
-    else if (wavelength === 1550 && report.results_1550) report.results_1550.highest_reflectance_db = highestRefl;
+    if (wavelength === 1310 && report.results_1310) {
+      report.results_1310.highest_reflectance_db = highestRefl;
+      // If fiber_end is negative, use the "NNN.NN ft" marker from the page as actual fiber length
+      if (report.results_1310.fiber_end_ft < 0) {
+        const ftMatch = pageText.match(/([\d.]+)\s*ft\s*$/m);
+        if (ftMatch) {
+          const ftVal = parseFloat(ftMatch[1]);
+          if (!isNaN(ftVal) && ftVal > 0) report.results_1310.fiber_end_ft = ftVal;
+        }
+      }
+    }
+    else if (wavelength === 1550 && report.results_1550) {
+      report.results_1550.highest_reflectance_db = highestRefl;
+      if (report.results_1550.fiber_end_ft < 0) {
+        const ftMatch = pageText.match(/([\d.]+)\s*ft\s*$/m);
+        if (ftMatch) {
+          const ftVal = parseFloat(ftMatch[1]);
+          if (!isNaN(ftVal) && ftVal > 0) report.results_1550.fiber_end_ft = ftVal;
+        }
+      }
+    }
   }
 
   // Also parse thresholds from vertical pdf.js layout
@@ -560,6 +607,8 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
     }
   }
 
+  // Recalculate link length in case fiber_end was corrected from negative to positive
+  calcLinkLength(report);
   calcPeaks(report);
   return report;
 }
