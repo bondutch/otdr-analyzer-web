@@ -1,0 +1,262 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Dark Theme (default) ─── */
+:root, .theme-dark {
+  --bg-body: #0A1628;
+  --bg-header: rgba(14, 28, 50, 0.8);
+  --bg-card: rgba(255, 255, 255, 0.02);
+  --bg-card-hover: rgba(255, 255, 255, 0.05);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --bg-scrollbar-track: #0e1c32;
+  --bg-scrollbar-thumb: #1e3a5f;
+  --bg-scrollbar-hover: #2a5080;
+  --bg-debug: rgba(0, 0, 0, 0.3);
+
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-input: rgba(255, 255, 255, 0.1);
+  --border-drop: rgba(255, 255, 255, 0.1);
+  --border-drop-hover: rgba(255, 255, 255, 0.2);
+
+  --text-primary: #f0f0f0;
+  --text-secondary: #d0d0d0;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  --text-heading: #ffffff;
+  --text-link: #22d3ee;
+
+  --accent: #00E5FF;
+  --accent-muted: rgba(0, 229, 255, 0.6);
+
+  /* Table column backgrounds */
+  --col-default-bg: rgba(30, 58, 95, 0.6);
+  --col-default-text: #e0e0e0;
+  --col-equip-bg: rgba(112, 173, 71, 0.15);
+  --col-equip-text: #a5d6a7;
+  --col-1310-bg: rgba(100, 181, 246, 0.08);
+  --col-1310-text: #90caf9;
+  --col-1550-bg: rgba(255, 183, 77, 0.08);
+  --col-1550-text: #ffcc80;
+  --col-peak-bg: rgba(0, 230, 118, 0.06);
+  --col-peak-text: #a5d6a7;
+  --col-thresh-bg: rgba(255, 192, 0, 0.08);
+  --col-thresh-text: #ffe082;
+
+  --th-default: #1a3355;
+  --th-equip: rgba(112, 173, 71, 0.35);
+  --th-1310: rgba(100, 181, 246, 0.2);
+  --th-1550: rgba(255, 183, 77, 0.2);
+  --th-peak: rgba(0, 230, 118, 0.15);
+  --th-thresh: rgba(255, 192, 0, 0.2);
+  --th-border: rgba(0, 229, 255, 0.2);
+
+  --row-hover: rgba(0, 229, 255, 0.04);
+  --row-border: rgba(255, 255, 255, 0.04);
+
+  --badge-pass-bg: rgba(0, 230, 118, 0.15);
+  --badge-pass-text: #00E676;
+  --badge-pass-border: rgba(0, 230, 118, 0.3);
+  --badge-fail-bg: rgba(255, 82, 82, 0.15);
+  --badge-fail-text: #FF5252;
+  --badge-fail-border: rgba(255, 82, 82, 0.3);
+
+  --noise-opacity: 0.015;
+  --select-option-bg: #1a2a44;
+}
+
+/* ─── Light Theme ─── */
+.theme-light {
+  --bg-body: #f3f4f6;
+  --bg-header: rgba(255, 255, 255, 0.92);
+  --bg-card: rgba(255, 255, 255, 0.7);
+  --bg-card-hover: rgba(255, 255, 255, 0.9);
+  --bg-input: rgba(0, 0, 0, 0.04);
+  --bg-scrollbar-track: #e5e7eb;
+  --bg-scrollbar-thumb: #9ca3af;
+  --bg-scrollbar-hover: #6b7280;
+  --bg-debug: rgba(0, 0, 0, 0.05);
+
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-input: rgba(0, 0, 0, 0.15);
+  --border-drop: rgba(0, 0, 0, 0.12);
+  --border-drop-hover: rgba(0, 0, 0, 0.25);
+
+  --text-primary: #1f2937;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --text-heading: #111827;
+  --text-link: #0891b2;
+
+  --accent: #0891b2;
+  --accent-muted: rgba(8, 145, 178, 0.6);
+
+  --col-default-bg: rgba(241, 245, 249, 0.8);
+  --col-default-text: #374151;
+  --col-equip-bg: rgba(112, 173, 71, 0.08);
+  --col-equip-text: #166534;
+  --col-1310-bg: rgba(59, 130, 246, 0.06);
+  --col-1310-text: #1e40af;
+  --col-1550-bg: rgba(249, 115, 22, 0.06);
+  --col-1550-text: #9a3412;
+  --col-peak-bg: rgba(22, 163, 74, 0.06);
+  --col-peak-text: #166534;
+  --col-thresh-bg: rgba(234, 179, 8, 0.08);
+  --col-thresh-text: #854d0e;
+
+  --th-default: #e0e7ef;
+  --th-equip: rgba(112, 173, 71, 0.2);
+  --th-1310: rgba(59, 130, 246, 0.12);
+  --th-1550: rgba(249, 115, 22, 0.12);
+  --th-peak: rgba(22, 163, 74, 0.1);
+  --th-thresh: rgba(234, 179, 8, 0.15);
+  --th-border: rgba(8, 145, 178, 0.25);
+
+  --row-hover: rgba(8, 145, 178, 0.06);
+  --row-border: rgba(0, 0, 0, 0.06);
+
+  --badge-pass-bg: rgba(22, 163, 74, 0.12);
+  --badge-pass-text: #166534;
+  --badge-pass-border: rgba(22, 163, 74, 0.3);
+  --badge-fail-bg: rgba(220, 38, 38, 0.1);
+  --badge-fail-text: #dc2626;
+  --badge-fail-border: rgba(220, 38, 38, 0.3);
+
+  --noise-opacity: 0;
+  --select-option-bg: #ffffff;
+}
+
+/* ─── Apply theme variables ─── */
+body {
+  background: var(--bg-body);
+  color: var(--text-primary);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--bg-scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-scrollbar-hover); }
+
+/* Custom table styling */
+.otdr-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.otdr-table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 10px;
+  white-space: nowrap;
+  font-weight: 600;
+  border-bottom: 2px solid var(--th-border);
+  color: var(--text-primary);
+}
+
+.otdr-table td {
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--row-border);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 400;
+}
+
+.otdr-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+/* Column group colors */
+.col-default { background: var(--col-default-bg); color: var(--col-default-text); }
+.col-equip { background: var(--col-equip-bg); color: var(--col-equip-text); }
+.col-1310 { background: var(--col-1310-bg); color: var(--col-1310-text); }
+.col-1550 { background: var(--col-1550-bg); color: var(--col-1550-text); }
+.col-peak { background: var(--col-peak-bg); color: var(--col-peak-text); }
+.col-thresh { background: var(--col-thresh-bg); color: var(--col-thresh-text); }
+
+.th-default { background: var(--th-default); }
+.th-equip { background: var(--th-equip); }
+.th-1310 { background: var(--th-1310); }
+.th-1550 { background: var(--th-1550); }
+.th-peak { background: var(--th-peak); }
+.th-thresh { background: var(--th-thresh); }
+
+/* Drop zone animation */
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--accent-muted); }
+  50% { border-color: var(--accent); }
+}
+
+.drop-zone-active {
+  animation: pulse-border 1.5s ease-in-out infinite;
+  background: rgba(0, 229, 255, 0.05) !important;
+}
+
+/* Fiber pulse animation for progress */
+@keyframes fiber-pulse {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.fiber-progress-bar {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 25%,
+    #00BCD4 50%,
+    var(--accent) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: fiber-pulse 2s linear infinite;
+}
+
+/* Tab active indicator */
+.tab-active {
+  position: relative;
+}
+.tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px 1px 0 0;
+}
+
+/* Pass/Fail badges */
+.badge-pass {
+  background: var(--badge-pass-bg);
+  color: var(--badge-pass-text);
+  border: 1px solid var(--badge-pass-border);
+}
+.badge-fail {
+  background: var(--badge-fail-bg);
+  color: var(--badge-fail-text);
+  border: 1px solid var(--badge-fail-border);
+}
+
+/* Noise texture overlay */
+.noise-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: var(--noise-opacity);
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Select option styling for both themes */
+select option {
+  background: var(--select-option-bg);
+  color: var(--text-primary);
+}
