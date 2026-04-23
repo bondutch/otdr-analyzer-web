@@ -187,13 +187,13 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
   // Wavelength results
   // Pre-process: strip ">" from ORL values (e.g., "> 29.38" -> "29.38")
   const lines = text.split('\n').map(l => l.replace(/>\s*([\d.]+)/g, '$1'));
-  const patternWithDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
-  const patternDirNoAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
-  const patternNoDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.\-]+)\s+(\d+)\s*$/;
+  const patternWithDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+  const patternDirNoAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+  const patternNoDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+(\d+)\s*$/;
   // Mid-line patterns: wavelength appears after filename text (not at start of line)
   // e.g., "BAND_ALPHA_OPT1_BBU to RRU 1310 1.562 37.64 3764.97 RRH <- BBU 1.361 6"
-  const patternMidlineAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
-  const patternMidlineNoAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+  const patternMidlineAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+  const patternMidlineNoAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
