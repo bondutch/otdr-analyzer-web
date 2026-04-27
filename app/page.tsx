@@ -195,7 +195,7 @@ export default function OTDRAnalyzerPage() {
             <img src="/otdr-icon.png" alt="OTDR" className="w-9 h-9 rounded-lg" />
             <div>
               <h1 className="text-lg font-semibold tracking-tight" style={{ color: 'var(--text-heading)' }}>OTDR Analyzer</h1>
-              <p className="text-[10px] font-mono tracking-widest uppercase" style={{ color: 'var(--accent-muted)' }}>v1.01 Web Edition</p>
+              <p className="text-[10px] font-mono tracking-widest uppercase" style={{ color: 'var(--accent-muted)' }}>v1.02 Web Edition</p>
             </div>
           </div>
           <div className="flex items-center gap-3">

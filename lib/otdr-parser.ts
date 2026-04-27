@@ -745,7 +745,10 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
   while (i < pages.length) {
     const summaryText = pages[i].text;
     if (!summaryText.includes('Summary') || !(summaryText.includes('Laser nm') || (summaryText.includes('Laser') && summaryText.includes('nm')))) { i++; continue; }
-    if (summaryText.includes('Test Setup') || summaryText.includes('SMART')) { i++; continue; }
+    // Skip detail-only pages in .msor compiled format (have Test Setup but not Summary)
+    // BUT don't skip .sor single-page reports that have BOTH Summary and Test Setup on the same page
+    const isSorSinglePage = /\.sor\b/i.test(summaryText) && !(/\.msor\b/i.test(summaryText));
+    if (!isSorSinglePage && (summaryText.includes('Test Setup') || summaryText.includes('SMART'))) { i++; continue; }
 
     const page1310Text = i + 1 < pages.length ? pages[i + 1].text : '';
     const page1550Text = i + 2 < pages.length ? pages[i + 2].text : '';
@@ -759,17 +762,23 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
 
     let fileName = fileMatch[1].trim();
     // Handle line-wrapped filenames: "PLEASANT GREEN_700-" + next line "850_ALPHA_..."
-    if (fileName.endsWith('-')) {
+    // or "JAY ELM_CBAND_A0001_BBU to" + next line "RRH_1310.sor.pdf"
+    if (fileName.endsWith('-') || fileName.endsWith(' to') || fileName.endsWith(' from') || fileName.endsWith(' TO') || fileName.endsWith(' FROM')) {
       const afterFile = summaryText.slice(summaryText.indexOf(fileName) + fileName.length);
       const nextLineMatch = afterFile.match(/^\s*\n\s*(\S[^\n]+)/);
       if (nextLineMatch) {
-        fileName = fileName + nextLineMatch[1].trim();
+        const joiner = fileName.endsWith('-') ? '' : ' ';
+        fileName = fileName + joiner + nextLineMatch[1].trim();
       }
     }
-    fileName = fileName.replace(/\.msor\.pdf$|\.msor$|\.pdf$/i, '').trim().replace(/-$/, '').trim();
-    const baseKey = fileName.toLowerCase();
+    fileName = fileName.replace(/\.sor\.pdf$|\.msor\.pdf$|\.msor$|\.sor$|\.pdf$/i, '').trim().replace(/-$/, '').trim();
+    // Strip wavelength suffix for merging .sor pairs (e.g., "JAY ELM_CBAND_A0001_BBU to RRH_1310" -> "..._BBU to RRH")
+    const displayName = fileName.replace(/[_\s]*(1310|1550)$/i, '').trim();
+    const baseKey = displayName.toLowerCase();
 
-    const report = createDefaultReport(fileName, 'VIAVI');
+    const report = reportsDict.get(baseKey) || createDefaultReport(displayName, 'VIAVI');
+    // Update filename to show merged name
+    if (!reportsDict.has(baseKey)) report.filename = displayName;
 
     // Metadata
     let mg: string | null;
@@ -813,19 +822,22 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
 
     // Parse wavelength results from summary
     const processedLines = summaryText.split('\n').map(l => l.replace(/>\s*([\d.]+)/g, '$1'));
-    const pWithAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
-    const pDirNoAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
-    const pNoDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.\-]+)\s+(\d+)\s*$/;
-    const pMsor = /\.msor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
-    const pMsorNoAvg = /\.msor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+    const pWithAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+    const pDirNoAvg = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+    const pNoDir = /^(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+(\d+)\s*$/;
+    const pMsor = /\.msor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+    const pMsorNoAvg = /\.msor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
     // Mid-line patterns: wavelength appears after filename text
-    const pMidlineAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
-    const pMidlineNoAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+    const pMidlineAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+    const pMidlineNoAvg = /\b(1[35][15]0)\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
+    // .sor patterns (no .msor prefix)
+    const pSor = /\.sor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+([\d.\-]+)\s+(\d+)\s*$/;
+    const pSorNoAvg = /\.sor\s+(\d{4})\s+([\d.\-]+)\s+([\d.]+)\s+([\d.\-]+)\s+(.+?(?:->|<-).+?)\s+(\d+)\s*$/;
 
     for (let li = 0; li < processedLines.length; li++) {
       const trimmed = processedLines[li].trim();
       let matched = false;
-      for (const pattern of [pWithAvg, pMsor, pDirNoAvg, pMsorNoAvg, pNoDir, pMidlineAvg, pMidlineNoAvg]) {
+      for (const pattern of [pWithAvg, pMsor, pSor, pDirNoAvg, pMsorNoAvg, pSorNoAvg, pNoDir, pMidlineAvg, pMidlineNoAvg]) {
         const match = trimmed.match(pattern);
         if (match) {
           const wl = parseInt(match[1]);
@@ -942,7 +954,11 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     }
 
     // Parse event tables from detail pages for reflectance
-    for (const [detailText, wlDefault] of [[page1310Text, 1310], [page1550Text, 1550]] as [string, number][]) {
+    // For .sor single-page format, the event table is on the same page
+    const detailSources: [string, number][] = isSorSinglePage
+      ? [[summaryText, report.results_1310 ? 1310 : (report.results_1550 ? 1550 : 0)]]
+      : [[page1310Text, 1310], [page1550Text, 1550]];
+    for (const [detailText, wlDefault] of detailSources) {
       const wlCheck = detailText.match(/(?:SMART|EXPERT|OTDR)\s+(\d{4})nm/);
       const wavelength = wlCheck ? parseInt(wlCheck[1]) : wlDefault;
       const eventReflPairs: [number, number][] = [];
@@ -980,7 +996,8 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     calcLinkLength(report);
     calcPeaks(report);
     reportsDict.set(baseKey, report);
-    i += 3;
+    // .sor single-page: advance 1 page; .msor compiled: advance 3 pages
+    i += isSorSinglePage ? 1 : 3;
   }
 
   return Array.from(reportsDict.values());
