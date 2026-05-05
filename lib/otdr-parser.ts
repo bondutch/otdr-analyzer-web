@@ -1087,25 +1087,27 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
   for (let pi = 0; pi < pages.length - 1; pi += 2) {
     const page1Text = pages[pi].text;
     const page2Text = pages[pi + 1]?.text || '';
-    if (!page1Text.includes('iOLM Report') && !page1Text.includes('iOLM Results')) continue;
+    if (!page1Text.includes('iOLM Report') && !page1Text.includes('iOLM Results') && !/iolm\s*report/i.test(page1Text) && !/iolm\s*results/i.test(page1Text)) continue;
 
     const report = createDefaultReport(filename, 'EXFO_IOLM');
     let mg: string | null;
 
-    // Extract internal filename from report
-    mg = matchGroup(page1Text, /Filename:\s*([^\n]+)/);
-    if (!mg) mg = matchGroup(page1Text, /File\s*name:\s*([^\n]+)/);
-    if (mg) report.filename = mg;
+    // Extract internal filename from report - pdf.js may have "File name:" on same line or across lines
+    mg = matchGroup(page1Text, /File\s*name:\s*([^\n]+)/i);
+    if (mg) report.filename = mg.trim();
 
-    // Pass/Fail
-    if (page1Text.includes('iOLM Report Pass')) report.overall_result = 'PASS';
-    else if (page1Text.includes('iOLM Report Fail')) report.overall_result = 'FAIL';
+    // Pass/Fail - pdf.js may join on same line: "iOLM Report Pass" or separate lines
+    if (/iOLM Report\s*\n?\s*Pass/i.test(page1Text)) report.overall_result = 'PASS';
+    else if (/iOLM Report\s*\n?\s*Fail/i.test(page1Text)) report.overall_result = 'FAIL';
 
-    // General Information
-    mg = matchGroup(page1Text, /JobID:\s*([^\n]+)/); if (mg) report.job_id = mg;
-    mg = matchGroup(page1Text, /Customer:\s*(\S+)/); if (mg) report.customer = mg;
-    mg = matchGroup(page1Text, /Company:\s*([^\n]+)/); if (mg) report.company = mg;
-    mg = matchGroup(page1Text, /Testdate:\s*([^\s]+)/); if (mg) report.test_date = mg;
+    // General Information - handle both pdfplumber ("JobID:") and pdf.js ("Job ID:") formats
+    mg = matchGroup(page1Text, /Job\s*ID:\s*([^\n]+)/); if (mg) report.job_id = mg;
+    mg = matchGroup(page1Text, /Customer:\s*([^\n]+)/); if (mg) report.customer = mg.trim();
+    mg = matchGroup(page1Text, /Company:\s*([^\n]+)/); if (mg) report.company = mg.trim();
+    mg = matchGroup(page1Text, /Test\s*date:\s*([^\s]+)/); if (mg) report.test_date = mg;
+    // Also try "Test time:" to append to test_date
+    const timeMatch = matchGroup(page1Text, /Test\s*time:\s*([^\n]+)/);
+    if (timeMatch && report.test_date) report.test_date += ' ' + timeMatch.trim();
 
     // Operator - may be on line after "Operator" header
     const opMatch = page1Text.match(/Operator\s*\n([^\n]+)/);
@@ -1114,20 +1116,22 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
     }
 
     // Equipment info - handle both pdfplumber ("Serialnumber") and pdf.js ("Serial number") formats
-    mg = matchGroup(page1Text, /Model\s+([A-Za-z0-9\-]+)/); if (mg) report.model_1 = mg;
-    mg = matchGroup(page1Text, /Serial\s*number\s+(\d+)/); if (mg) report.serial_1 = mg;
-    mg = matchGroup(page1Text, /Calibration\s*date\s+([^\n]+)/); if (mg) report.calibration_date = mg;
-    mg = matchGroup(page1Text, /Calibration\s*due\s+([^\n]+)/i); if (mg) report.calibration_due = mg;
+    mg = matchGroup(page1Text, /Model\s*\n([A-Za-z0-9\-]+)/); if (mg) report.model_1 = mg;
+    if (!report.model_1) { mg = matchGroup(page1Text, /Model\s+([A-Za-z0-9\-]+)/); if (mg) report.model_1 = mg; }
+    mg = matchGroup(page1Text, /Serial\s*number\s*\n?(\d+)/); if (mg) report.serial_1 = mg;
+    mg = matchGroup(page1Text, /Calibration\s*date\s*\n?([^\n]+)/); if (mg) report.calibration_date = mg.trim();
+    mg = matchGroup(page1Text, /Calibration\s*due\s*\n?([^\n]+)/i); if (mg) report.calibration_due = mg.trim();
 
     // Identifiers table - multiple format variants
-    // Format 1: CableID Technology FiberID Frequency Location
+    // Format 1 (pdfplumber): CableID Technology FiberID Frequency Location
+    // Format 1b (pdf.js): Cable ID Technology Fiber ID Frequency Location
     const identMatch = page1Text.match(
-      /Identifiers\s*\nCableID\s+(?:Technology\s+)?FiberID\s+(?:Frequency\s+)?Location\s*\n(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/
+      /Identifiers\s*\nCable\s*ID\s+(?:Technology\s+)?Fiber\s*ID\s+(?:Frequency\s+)?Location\s*\n(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\S ]+)/
     );
     if (identMatch) {
-      report.cable_id = identMatch[1]; report.fiber_id = identMatch[3]; report.location_a = identMatch[5];
+      report.cable_id = identMatch[1]; report.fiber_id = identMatch[3]; report.location_a = identMatch[5]?.trim();
     } else {
-      // Format 2: simple "CableID FiberID" with just values below
+      // Format 2: simple "CableID FiberID" or "Cable ID Fiber ID" with just values below
       const identSimple = page1Text.match(
         /Identifiers\s*\nCable\s*ID\s+Fiber\s*ID\s*\n(\S.*)/
       );
@@ -1136,19 +1140,34 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
         if (vals.length >= 2) { report.cable_id = vals[0]; report.fiber_id = vals[1]; }
         else if (vals.length === 1) report.fiber_id = vals[0];
       } else {
-        // Fallback: parse section between Identifiers and iOLM Results
-        const identSection = page1Text.match(/Identifiers[\s\S]*?iOLM Results/);
-        if (identSection) {
-          const dataMatch = identSection[0].match(/\n(\S+)\s+\S+\s+(\S+)\s+[\d\-]+\s+(\S+)/);
-          if (dataMatch) {
-            report.cable_id = dataMatch[1]; report.fiber_id = dataMatch[2]; report.location_a = dataMatch[3];
+        // Format 3: TECHNOLOGY PORT SECTOR headers (Garden Plain style)
+        const identTech = page1Text.match(
+          /Identifiers\s*\n(?:TECHNOLOGY|Technology)\s+(?:PORT|Port)\s+(?:SECTOR|Sector)\s*\n(\S+)\s+(\S+)\s+(\S+)/
+        );
+        if (identTech) {
+          report.cable_id = identTech[1]; report.fiber_id = identTech[2] + ' ' + identTech[3];
+        } else {
+          // Fallback: parse section between Identifiers and iOLM Results
+          const identSection = page1Text.match(/Identifiers[\s\S]*?iOLM\s*Results/i);
+          if (identSection) {
+            // Try to get the data line after the header line
+            const identLines = identSection[0].split('\n').filter(l => l.trim());
+            if (identLines.length >= 3) {
+              // Skip "Identifiers" and header row, take data row
+              const dataLine = identLines[identLines.length - 1].trim();
+              const vals = dataLine.split(/\s{2,}|\t/);
+              if (vals.length >= 2) {
+                report.cable_id = vals[0]; report.fiber_id = vals[1];
+                if (vals.length >= 3) report.location_a = vals[vals.length - 1];
+              }
+            }
           }
         }
       }
     }
 
     let v: number | null;
-    v = matchFloat(page1Text, /Linklength:\s*([\d.]+)\s*ft/); if (v !== null) report.link_length_ft = v;
+    v = matchFloat(page1Text, /Link\s*length:\s*([\d.]+)\s*ft/i); if (v !== null) report.link_length_ft = v;
 
     // iOLM Results
     const resultsSection = page1Text.match(/iOLM Results[\s\S]*?(?=Link View|Element|$)/i);
