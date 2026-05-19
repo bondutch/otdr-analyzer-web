@@ -1,17 +1,8 @@
 /**
- * OTDR Report Parser v8.4 - Web Edition
+ * OTDR Report Parser v8.5 - Web Edition
  * Complete port of Python OTDR Analyzer v8.0 parsing engine.
  * Supports: VIAVI (dual, single, compiled), EXFO (legacy, FTBx, iOLM),
  *           Anritsu MT9083, Anritsu MT9085 (dual + compiled single-wavelength)
- *
- * v8.4 Changes:
- * - Fixed VIAVI SmartOTDR vertical fallback: accept negative fiber_end values
- *   (short fiber runs with negative distance offsets)
- * - Fixed VIAVI event table wavelength detection for pdf.js vertical layout
- *   where "EXPERT" and "1310nm" appear on separate lines
- * - Added fiber_end_ft from Fiber End markers (e.g., "385.91 ft") as fallback
- *   when summary fiber_end is negative
- * - Improved event data parsing for pdf.js vertical layout with tilde prefixes
  *
  * v8.3 Changes (synced from Python v8.0):
  * - Added mid-line wavelength patterns for VIAVI (filename text before wavelength)
@@ -420,8 +411,7 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
         const orl = parseFloat(orlStr);
         const fiberEnd = parseFloat(fiberEndStr);
         if (isNaN(loss) || isNaN(orl) || isNaN(fiberEnd)) continue;
-        // Validate: ORL should be > 10 (sanity check to avoid false matches)
-        // fiberEnd can be negative for SmartOTDR short runs with negative distance offsets
+        // Validate: ORL should be > 10 and fiber end > 10 (sanity check to avoid false matches)
         if (orl < 10) continue;
         // Find event count: scan forward for standalone small number
         // The pattern after fiber_end is: direction lines (may wrap), avg_loss, event_count
@@ -468,12 +458,12 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
       const wlMatch2 = pageText.match(/OTDR\n(\d{4})nm/);
       if (wlMatch2) wavelength = parseInt(wlMatch2[1]);
     }
-    // pdf.js vertical with split: "EXPERT\n1310nm\n5ns" or just standalone "1310nm" or "1550nm"
+    // pdf.js vertical with split: "EXPERT\n1310nm" or "FTTA\n1310nm"
     if (!wavelength) {
       const wlMatch3 = pageText.match(/(?:EXPERT|SMART|FTTA|OTDR)\n(\d{4})nm/);
       if (wlMatch3) wavelength = parseInt(wlMatch3[1]);
     }
-    // Last resort: find standalone "1310nm" or "1550nm" on its own line within Test Setup section
+    // Last resort: find standalone "1310nm" or "1550nm" within Test Setup section
     if (!wavelength) {
       const testSetupIdx = pageText.indexOf('Test Setup');
       const summaryIdx = pageText.indexOf('Summary');
@@ -528,11 +518,11 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
         if (inEvt) {
           if (l.startsWith('Page') || l === '') break;
           // Skip header labels and units
-          if (/^(Distance|Loss|Reflect\.|Slope|Section|T\. Loss|ft|dB|dB\/km)$/.test(l)) continue;
-          // Collect data values: numbers, negative numbers, tilde-prefixed, "End"
+          if (/^(Distance|Loss|Reflect\.|Slope|Section|T\. Loss|Section\s*Att\.|ft|dB|dB\/km)$/.test(l)) continue;
           // Clean tilde prefix: "~ 0.323" -> "0.323", standalone "~" -> skip
           if (l === '~') continue;
           const cleaned = l.replace(/^~\s*/, '').replace(/^>\s*/, '');
+          // Collect data values: numbers, negative numbers, "End"
           if (/^-?[\d.]+$/.test(cleaned) || l === 'End') {
             evtDataValues.push(cleaned);
           }
@@ -562,7 +552,6 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
     const highestRefl = filterReflectancePairs(eventReflPairs);
     if (wavelength === 1310 && report.results_1310) {
       report.results_1310.highest_reflectance_db = highestRefl;
-      // If fiber_end is negative, use the "NNN.NN ft" marker from the page as actual fiber length
       if (report.results_1310.fiber_end_ft < 0) {
         const ftMatch = pageText.match(/([\d.]+)\s*ft\s*$/m);
         if (ftMatch) {
@@ -607,7 +596,6 @@ function parseViaviReport(text: string, filename: string, pages: PageText[]): OT
     }
   }
 
-  // Recalculate link length in case fiber_end was corrected from negative to positive
   calcLinkLength(report);
   calcPeaks(report);
   return report;
@@ -745,8 +733,8 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
   while (i < pages.length) {
     const summaryText = pages[i].text;
     if (!summaryText.includes('Summary') || !(summaryText.includes('Laser nm') || (summaryText.includes('Laser') && summaryText.includes('nm')))) { i++; continue; }
-    // Skip detail-only pages in .msor compiled format (have Test Setup but not Summary)
-    // BUT don't skip .sor single-page reports that have BOTH Summary and Test Setup on the same page
+    // Skip detail-only pages in .msor compiled format (have Test Setup but not Summary on their own)
+    // BUT don't skip .sor single-page reports or pages that have BOTH Summary and Test Setup
     const isSorSinglePage = /\.sor\b/i.test(summaryText) && !(/\.msor\b/i.test(summaryText));
     if (!isSorSinglePage && (summaryText.includes('Test Setup') || summaryText.includes('SMART'))) { i++; continue; }
 
@@ -758,12 +746,12 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     if (!fileMatch || !fileMatch[1].trim()) {
       fileMatch = summaryText.match(/File\s*:\s*\n\s*(\S[^\n]+)/);
     }
-    if (!fileMatch) { i += 3; continue; }
+    if (!fileMatch) { i += (isSorSinglePage ? 1 : 3); continue; }
 
     let fileName = fileMatch[1].trim();
-    // Handle line-wrapped filenames: "PLEASANT GREEN_700-" + next line "850_ALPHA_..."
-    // or "JAY ELM_CBAND_A0001_BBU to" + next line "RRH_1310.sor.pdf"
-    if (fileName.endsWith('-') || fileName.endsWith(' to') || fileName.endsWith(' from') || fileName.endsWith(' TO') || fileName.endsWith(' FROM')) {
+    // Handle line-wrapped filenames: join next line if filename is incomplete
+    // Cases: ends with "-", ends with "to"/"from", or doesn't contain .msor/.sor/.pdf extension
+    if (fileName.endsWith('-') || /\s+(to|from)$/i.test(fileName) || !fileName.match(/\.(msor|sor|pdf)/i)) {
       const afterFile = summaryText.slice(summaryText.indexOf(fileName) + fileName.length);
       const nextLineMatch = afterFile.match(/^\s*\n\s*(\S[^\n]+)/);
       if (nextLineMatch) {
@@ -772,13 +760,11 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
       }
     }
     fileName = fileName.replace(/\.sor\.pdf$|\.msor\.pdf$|\.msor$|\.sor$|\.pdf$/i, '').trim().replace(/-$/, '').trim();
-    // Strip wavelength suffix for merging .sor pairs (e.g., "JAY ELM_CBAND_A0001_BBU to RRH_1310" -> "..._BBU to RRH")
-    const displayName = fileName.replace(/[_\s]*(1310|1550)$/i, '').trim();
+    // Strip wavelength suffix for merging .sor pairs (e.g., "JAY ELM_CBAND_A0001_BBU to RRH_1310" -> base name)
+    const displayName = isSorSinglePage ? fileName.replace(/[_\s]*(1310|1550)$/i, '').trim() : fileName;
     const baseKey = displayName.toLowerCase();
 
     const report = reportsDict.get(baseKey) || createDefaultReport(displayName, 'VIAVI');
-    // Update filename to show merged name
-    if (!reportsDict.has(baseKey)) report.filename = displayName;
 
     // Metadata
     let mg: string | null;
@@ -789,6 +775,16 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     mg = matchGroup(summaryText, /Location\s*B\s*:\s*([^\n]+?)(?:\s+Job|$)/i); if (mg) report.location_b = mg;
     mg = matchGroup(summaryText, /Job\s*(?:ID|Id)\s*:\s*([^\n]+?)(?:\s+Technician|$)/i); if (mg) report.job_id = mg;
     mg = matchGroup(summaryText, /Technician\s*(?:ID|Id)\s*:\s*([^\n]*)/i); if (mg) report.technician_id = mg;
+    // SmartOTDR FTTA format: Fiber Code, RRU Id, Base Station Id
+    if (!report.fiber_id) {
+      mg = matchGroup(summaryText, /Fiber\s*Code\s*:\s*([^\n]+?)(?:\s+Base|$)/i); if (mg) report.fiber_id = mg;
+    }
+    if (!report.cable_id) {
+      mg = matchGroup(summaryText, /RRU\s*Id\s*:\s*([^\n]+?)(?:\s+Job|$)/i); if (mg) report.cable_id = mg;
+    }
+    if (!report.location_a) {
+      mg = matchGroup(summaryText, /Base\s*Station\s*Id\s*:\s*([^\n]+?)(?:\s*$|\s*\n)/i); if (mg) report.location_a = mg;
+    }
 
     // Equipment from detail pages
     for (const detailText of [page1310Text, page1550Text]) {
@@ -959,8 +955,10 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
       ? [[summaryText, report.results_1310 ? 1310 : (report.results_1550 ? 1550 : 0)]]
       : [[page1310Text, 1310], [page1550Text, 1550]];
     for (const [detailText, wlDefault] of detailSources) {
-      const wlCheck = detailText.match(/(?:SMART|EXPERT|OTDR)\s+(\d{4})nm/);
-      const wavelength = wlCheck ? parseInt(wlCheck[1]) : wlDefault;
+      const wlCheck = detailText.match(/(?:SMART|EXPERT|OTDR|FTTA)\s+(\d{4})nm/);
+      // Also try pdf.js vertical: "FTTA\n1310nm"
+      const wlCheck2 = !wlCheck ? detailText.match(/(?:SMART|EXPERT|OTDR|FTTA)\n(\d{4})nm/) : null;
+      const wavelength = wlCheck ? parseInt(wlCheck[1]) : (wlCheck2 ? parseInt(wlCheck2[1]) : wlDefault);
       const eventReflPairs: [number, number][] = [];
       let totalEventsInTable = 0;
       const dLines = detailText.split('\n');
@@ -1092,11 +1090,12 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
     const report = createDefaultReport(filename, 'EXFO_IOLM');
     let mg: string | null;
 
-    // Extract internal filename from report - pdf.js may have "File name:" on same line or across lines
+    // Extract internal filename from report
     mg = matchGroup(page1Text, /File\s*name:\s*([^\n]+)/i);
     if (mg) report.filename = mg.trim();
 
-    // Pass/Fail - pdf.js may join on same line: "iOLM Report Pass" or separate lines
+    // Pass/Fail
+    // Pass/Fail - pdf.js may join on same line or separate lines
     if (/iOLM Report\s*\n?\s*Pass/i.test(page1Text)) report.overall_result = 'PASS';
     else if (/iOLM Report\s*\n?\s*Fail/i.test(page1Text)) report.overall_result = 'FAIL';
 
@@ -1105,14 +1104,19 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
     mg = matchGroup(page1Text, /Customer:\s*([^\n]+)/); if (mg) report.customer = mg.trim();
     mg = matchGroup(page1Text, /Company:\s*([^\n]+)/); if (mg) report.company = mg.trim();
     mg = matchGroup(page1Text, /Test\s*date:\s*([^\s]+)/); if (mg) report.test_date = mg;
-    // Also try "Test time:" to append to test_date
     const timeMatch = matchGroup(page1Text, /Test\s*time:\s*([^\n]+)/);
     if (timeMatch && report.test_date) report.test_date += ' ' + timeMatch.trim();
 
-    // Operator - may be on line after "Operator" header
-    const opMatch = page1Text.match(/Operator\s*\n([^\n]+)/);
+    // Operator - may be on same line or line after "Operator" header
+    const opMatch = page1Text.match(/Operator\s+([^\n]+)/);
     if (opMatch && opMatch[1].trim() && !opMatch[1].trim().startsWith('Model')) {
       report.technician_id = opMatch[1].trim();
+    }
+    if (!report.technician_id) {
+      const opMatch2 = page1Text.match(/Operator\s*\n([^\n]+)/);
+      if (opMatch2 && opMatch2[1].trim() && !opMatch2[1].trim().startsWith('Model')) {
+        report.technician_id = opMatch2[1].trim();
+      }
     }
 
     // Equipment info - handle both pdfplumber ("Serialnumber") and pdf.js ("Serial number") formats
@@ -1123,15 +1127,14 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
     mg = matchGroup(page1Text, /Calibration\s*due\s*\n?([^\n]+)/i); if (mg) report.calibration_due = mg.trim();
 
     // Identifiers table - multiple format variants
-    // Format 1 (pdfplumber): CableID Technology FiberID Frequency Location
-    // Format 1b (pdf.js): Cable ID Technology Fiber ID Frequency Location
+    // Format 1 (pdfplumber/pdf.js): Cable ID Technology Fiber ID Frequency Location
     const identMatch = page1Text.match(
       /Identifiers\s*\nCable\s*ID\s+(?:Technology\s+)?Fiber\s*ID\s+(?:Frequency\s+)?Location\s*\n(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\S ]+)/
     );
     if (identMatch) {
       report.cable_id = identMatch[1]; report.fiber_id = identMatch[3]; report.location_a = identMatch[5]?.trim();
     } else {
-      // Format 2: simple "CableID FiberID" or "Cable ID Fiber ID" with just values below
+      // Format 2: simple "Cable ID Fiber ID" with just values below
       const identSimple = page1Text.match(
         /Identifiers\s*\nCable\s*ID\s+Fiber\s*ID\s*\n(\S.*)/
       );
@@ -1140,7 +1143,7 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
         if (vals.length >= 2) { report.cable_id = vals[0]; report.fiber_id = vals[1]; }
         else if (vals.length === 1) report.fiber_id = vals[0];
       } else {
-        // Format 3: TECHNOLOGY PORT SECTOR headers (Garden Plain style)
+        // Format 3: TECHNOLOGY PORT SECTOR headers
         const identTech = page1Text.match(
           /Identifiers\s*\n(?:TECHNOLOGY|Technology)\s+(?:PORT|Port)\s+(?:SECTOR|Sector)\s*\n(\S+)\s+(\S+)\s+(\S+)/
         );
@@ -1150,10 +1153,8 @@ function parseExfoIolmMultipage(pages: PageText[], filename: string): OTDRReport
           // Fallback: parse section between Identifiers and iOLM Results
           const identSection = page1Text.match(/Identifiers[\s\S]*?iOLM\s*Results/i);
           if (identSection) {
-            // Try to get the data line after the header line
             const identLines = identSection[0].split('\n').filter(l => l.trim());
             if (identLines.length >= 3) {
-              // Skip "Identifiers" and header row, take data row
               const dataLine = identLines[identLines.length - 1].trim();
               const vals = dataLine.split(/\s{2,}|\t/);
               if (vals.length >= 2) {
