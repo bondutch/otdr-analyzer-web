@@ -915,15 +915,17 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
         for (let j = li + 1; j < Math.min(li + 12, processedLines.length); j++) {
           const v = processedLines[j].trim();
           if (/^(Alarms|Thresholds|Page\s*Number|1\/|Summary)/i.test(v)) break;
+          // Check for event count (standalone 1-2 digit integer, no decimal) AFTER we have enough values
+          if (vals.length >= 3 && /^\d{1,2}$/.test(v) && !v.includes('.')) {
+            events = parseInt(v);
+            break; // events is typically last in the sequence
+          }
           if (v.match(/^-?[\d.]+$/)) {
             vals.push(v);
           } else if (v.includes('->') || v.includes('<-')) {
             dir = v;
           } else if (v === '---' || v === '--') {
             // avg loss placeholder, skip
-          } else if (/^\d{1,2}$/.test(v)) {
-            events = parseInt(v);
-            break; // events is typically last in the sequence
           }
         }
         // Need at least link_loss, orl, fiber_end (3 values)
