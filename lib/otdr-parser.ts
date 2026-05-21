@@ -951,6 +951,39 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
       }
     }
 
+    // Post-processing: if events is still 0, extract from detail page event tables
+    // This handles cases where the summary line format doesn't capture the event count
+    if (report.results_1310 && report.results_1310.events === 0) {
+      const evSrc = isSorSinglePage ? summaryText : page1310Text;
+      const evLines = evSrc.split('\n');
+      let maxEvt = 0;
+      let inEvtTable = false;
+      for (const el of evLines) {
+        if (el.includes('Event') && el.includes('Distance')) { inEvtTable = true; continue; }
+        if (inEvtTable) {
+          if (el.trim().startsWith('Page') || !el.trim()) break;
+          const em = el.trim().match(/^(\d{1,2})\s/);
+          if (em) maxEvt = Math.max(maxEvt, parseInt(em[1]));
+        }
+      }
+      if (maxEvt > 0) report.results_1310.events = maxEvt;
+    }
+    if (report.results_1550 && report.results_1550.events === 0) {
+      const evSrc = isSorSinglePage ? summaryText : page1550Text;
+      const evLines = evSrc.split('\n');
+      let maxEvt = 0;
+      let inEvtTable = false;
+      for (const el of evLines) {
+        if (el.includes('Event') && el.includes('Distance')) { inEvtTable = true; continue; }
+        if (inEvtTable) {
+          if (el.trim().startsWith('Page') || !el.trim()) break;
+          const em = el.trim().match(/^(\d{1,2})\s/);
+          if (em) maxEvt = Math.max(maxEvt, parseInt(em[1]));
+        }
+      }
+      if (maxEvt > 0) report.results_1550.events = maxEvt;
+    }
+
     // Parse event tables from detail pages for reflectance
     // For .sor single-page format, the event table is on the same page
     const detailSources: [string, number][] = isSorSinglePage
