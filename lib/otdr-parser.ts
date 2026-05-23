@@ -1349,6 +1349,37 @@ function exfoField(lines: string[], pattern: RegExp): string | null {
   return null;
 }
 
+// ─── EXFO FTBx Multi-Test Parser ───
+// Splits a compiled multi-fiber PDF (N × 4 pages per test) into individual reports.
+// Each test group: [1550 General+Graph, 1550 EventTable, 1310 General+Graph, 1310 EventTable]
+// Detection: a new test starts whenever page 1 of a group contains "OTDR Report (" AND
+// "General Information" (i.e. it's a header page, not an event-table page).
+
+function parseExfoFtbxMulti(pages: PageText[], filename: string): OTDRReport[] {
+  // Find indices of pages that start a new test (General Information pages)
+  const testStarts: number[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    const t = pages[i].text;
+    if (/OTDR\s*Report\s*\(\d{4}\s*nm/i.test(t) && /General\s*Information/i.test(t)) {
+      testStarts.push(i);
+    }
+  }
+
+  // If only one test (or detection failed), fall back to treating all pages as one test
+  if (testStarts.length <= 1) {
+    return [parseExfoFtbxReport(pages, filename)];
+  }
+
+  const reports: OTDRReport[] = [];
+  for (let ti = 0; ti < testStarts.length; ti++) {
+    const start = testStarts[ti];
+    const end = ti + 1 < testStarts.length ? testStarts[ti + 1] : pages.length;
+    const testPages = pages.slice(start, end);
+    reports.push(parseExfoFtbxReport(testPages, filename));
+  }
+  return reports;
+}
+
 function parseExfoFtbxReport(pages: PageText[], filename: string): OTDRReport {
   const report = createDefaultReport(filename, 'EXFO');
   const eventData: Record<number, { events: number; reflectance: number | null }> = {
@@ -1421,10 +1452,10 @@ function parseExfoFtbxReport(pages: PageText[], filename: string): OTDRReport {
         const v = exfoField(lines, /^Span\s*length:?\s*(.*)/i);
         if (v) { const m = v.match(/([\d.]+)\s*ft/); if (m) spanLength = parseFloat(m[1]); }
       }
-      let spanLoss = matchFloat(text, /Span\s*loss:\s*([\d.]+)\s*dB/);
+      let spanLoss = matchFloat(text, /Span\s*loss:\s*(-?[\d.]+)\s*dB/);
       if (spanLoss === null) {
         const v = exfoField(lines, /^Span\s*loss:?\s*(.*)/i);
-        if (v) { const m = v.match(/([\d.]+)\s*dB/); if (m) spanLoss = parseFloat(m[1]); }
+        if (v) { const m = v.match(/(-?[\d.]+)\s*dB/); if (m) spanLoss = parseFloat(m[1]); }
       }
       let spanOrl = matchFloat(text, /Span\s*ORL:\s*([\d.]+)\s*dB/);
       if (spanOrl === null) {
@@ -2120,7 +2151,7 @@ export async function parseOtdrReports(
     case 'VIAVI_SINGLE':
       return parseViaviSingleReport(pages, filename);
     case 'EXFO_FTBX':
-      return [parseExfoFtbxReport(pages, filename)];
+      return parseExfoFtbxMulti(pages, filename);
     case 'EXFO_IOLM':
       return parseExfoIolmMultipage(pages, filename);
     case 'EXFO':
