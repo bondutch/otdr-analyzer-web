@@ -1,8 +1,13 @@
 /**
- * OTDR Report Parser v8.5 - Web Edition
+ * OTDR Report Parser v8.6 - Web Edition
  * Complete port of Python OTDR Analyzer v8.0 parsing engine.
  * Supports: VIAVI (dual, single, compiled), EXFO (legacy, FTBx, iOLM),
  *           Anritsu MT9083, Anritsu MT9085 (dual + compiled single-wavelength)
+ *
+ * v8.6 Changes:
+ * - VIAVI compiled: handle single-page-per-test .msor variant where Summary,
+ *   Test Setup, and the event table all sit on ONE page (previously every page
+ *   was skipped as a "detail page", yielding 0 records). Detected via own event table.
  *
  * v8.3 Changes (synced from Python v8.0):
  * - Added mid-line wavelength patterns for VIAVI (filename text before wavelength)
@@ -736,7 +741,12 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     // Skip detail-only pages in .msor compiled format (have Test Setup but not Summary on their own)
     // BUT don't skip .sor single-page reports or pages that have BOTH Summary and Test Setup
     const isSorSinglePage = /\.sor\b/i.test(summaryText) && !(/\.msor\b/i.test(summaryText));
-    if (!isSorSinglePage && (summaryText.includes('Test Setup') || summaryText.includes('SMART'))) { i++; continue; }
+    // v8.6: Self-contained single-page report — Summary + Test Setup + event table all on ONE page.
+    // Covers both .sor single-page AND the single-page-per-test .msor variant (each page = one full test).
+    const hasOwnEventTable = summaryText.includes('Event') && summaryText.includes('Distance')
+      && (summaryText.includes('Reflect') || summaryText.includes('T. Loss'));
+    const isSinglePage = isSorSinglePage || hasOwnEventTable;
+    if (!isSinglePage && (summaryText.includes('Test Setup') || summaryText.includes('SMART'))) { i++; continue; }
 
     const page1310Text = i + 1 < pages.length ? pages[i + 1].text : '';
     const page1550Text = i + 2 < pages.length ? pages[i + 2].text : '';
@@ -746,7 +756,7 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     if (!fileMatch || !fileMatch[1].trim()) {
       fileMatch = summaryText.match(/File\s*:\s*\n\s*(\S[^\n]+)/);
     }
-    if (!fileMatch) { i += (isSorSinglePage ? 1 : 3); continue; }
+    if (!fileMatch) { i += (isSinglePage ? 1 : 3); continue; }
 
     let fileName = fileMatch[1].trim();
     // Handle line-wrapped filenames: join next line if filename is incomplete
@@ -954,7 +964,7 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     // Post-processing: if events is still 0, extract from detail page event tables
     // This handles cases where the summary line format doesn't capture the event count
     if (report.results_1310 && report.results_1310.events === 0) {
-      const evSrc = isSorSinglePage ? summaryText : page1310Text;
+      const evSrc = isSinglePage ? summaryText : page1310Text;
       const evLines = evSrc.split('\n');
       let maxEvt = 0;
       let inEvtTable = false;
@@ -969,7 +979,7 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
       if (maxEvt > 0) report.results_1310.events = maxEvt;
     }
     if (report.results_1550 && report.results_1550.events === 0) {
-      const evSrc = isSorSinglePage ? summaryText : page1550Text;
+      const evSrc = isSinglePage ? summaryText : page1550Text;
       const evLines = evSrc.split('\n');
       let maxEvt = 0;
       let inEvtTable = false;
@@ -986,7 +996,7 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
 
     // Parse event tables from detail pages for reflectance
     // For .sor single-page format, the event table is on the same page
-    const detailSources: [string, number][] = isSorSinglePage
+    const detailSources: [string, number][] = isSinglePage
       ? [[summaryText, report.results_1310 ? 1310 : (report.results_1550 ? 1550 : 0)]]
       : [[page1310Text, 1310], [page1550Text, 1550]];
     for (const [detailText, wlDefault] of detailSources) {
@@ -1030,7 +1040,7 @@ function parseViaviCompiledMultitest(pages: PageText[], filename: string): OTDRR
     calcPeaks(report);
     reportsDict.set(baseKey, report);
     // .sor single-page: advance 1 page; .msor compiled: advance 3 pages
-    i += isSorSinglePage ? 1 : 3;
+    i += isSinglePage ? 1 : 3;
   }
 
   return Array.from(reportsDict.values());
