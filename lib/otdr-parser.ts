@@ -1599,12 +1599,12 @@ function parseAnritsuPage(text: string, filename: string): OTDRReport | null {
   if (!report.results_1310 && !report.results_1550) {
     const fl1310 = matchFloat(text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 1);
     const fl1550 = matchFloat(text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 2);
-    const loss1310 = matchFloat(text, /Total\s+Loss\s+([\d.\-]+)\s*dB\s+([\d.\-]+)\s*dB/, 1);
-    const loss1550 = matchFloat(text, /Total\s+Loss\s+([\d.\-]+)\s*dB\s+([\d.\-]+)\s*dB/, 2);
+    const loss1310 = matchFloat(text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1);
+    const loss1550 = matchFloat(text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2);
     const ev1310 = matchInt(text, /Total\s+Events\s+(\d+)\s+(\d+)/, 1) || 0;
     const ev1550 = matchInt(text, /Total\s+Events\s+(\d+)\s+(\d+)/, 2) || 0;
-    const orl1310 = matchFloat(text, /ORL\s+([\d.]+)\s*dB\s+([\d.]+)\s*dB/, 1) || 0;
-    const orl1550 = matchFloat(text, /ORL\s+([\d.]+)\s*dB\s+([\d.]+)\s*dB/, 2) || 0;
+    const orl1310 = matchFloat(text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1) || 0;
+    const orl1550 = matchFloat(text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2) || 0;
     if (loss1310 !== null) {
       report.results_1310 = {
         wavelength_nm: 1310, link_loss_db: loss1310, link_orl_db: orl1310,
@@ -1729,12 +1729,14 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
     report.highest_fiber_end_ft = report.link_length_ft;
   }
 
-  const loss1310 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)\s*dB\s+([\d.\-]+)\s*dB/, 1);
-  const loss1550 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)\s*dB\s+([\d.\-]+)\s*dB/, 2);
+  // dB suffix is OPTIONAL: MT9085 prints "Total Loss x dB y dB"; MT9083A2
+  // trace-summary prints bare "Total Loss 0.598 0.016". Loss may be negative.
+  const loss1310 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1);
+  const loss1550 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2);
   const ev1310 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 1) || 0;
   const ev1550 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 2) || 0;
-  const orl1310 = matchFloat(page1Text, /ORL\s+([\d.]+)\s*dB\s+([\d.]+)\s*dB/, 1) || 0;
-  const orl1550 = matchFloat(page1Text, /ORL\s+([\d.]+)\s*dB\s+([\d.]+)\s*dB/, 2) || 0;
+  const orl1310 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1) || 0;
+  const orl1550 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2) || 0;
 
   if (page1Text.includes('PASS')) report.overall_result = 'PASS';
   else if (page1Text.includes('FAIL')) report.overall_result = 'FAIL';
