@@ -14,6 +14,10 @@
  * - Reflectance: 1550 event table can sit on a continuation page with no
  *   wavelength marker; replaced per-page keyword guess with running-wavelength
  *   tracking, and parse event rows from RAW text (collapsing merges columns).
+ * - Anritsu compiled DUAL file: a single PDF may hold many complete
+ *   dual-wavelength tests back to back (e.g. 31 x 4 pages = 124). Dispatcher now
+ *   splits at each "Trace summary report" + "1310 nm 1550 nm" page and parses
+ *   each slice separately; per-test name comes from Notes (File Name is blank).
  *
  * v8.6 Changes:
  * - VIAVI compiled: handle single-page-per-test .msor variant where Summary,
@@ -2151,6 +2155,50 @@ function parseAnritsuMt9085Compiled(pages: PageText[], filename: string): OTDRRe
 
 function parseAnritsuMt9085Report(pages: PageText[], filename: string): OTDRReport[] {
   if (pages.length === 0) return [];
+
+  // Compiled multi-test DUAL file (v8.7): a single PDF can hold many complete
+  // dual-wavelength tests back to back (e.g. 31 tests x 4 pages = 124 pages).
+  // Each test opens with a "Trace summary report" page carrying the
+  // "1310 nm 1550 nm" dual header. Detect >1 such summary and split the PDF at
+  // each one, then run the per-test dual parser on each slice. File Name is
+  // blank in this format, so the per-test identifier comes from Notes.
+  const dualSummaryIdxs: number[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (
+      pages[i].text.includes('Trace summary report') &&
+      /1310\s*nm\s+1550\s*nm/.test(pages[i].text)
+    ) {
+      dualSummaryIdxs.push(i);
+    }
+  }
+
+  if (dualSummaryIdxs.length > 1) {
+    const reports: OTDRReport[] = [];
+    // Derive a clean per-test identifier. Prefer a real File Name; fall back to
+    // Notes. pdf.js can fragment the identifier ("DELT A _HIGH_FIBER L0"), so
+    // strip stray spaces from the base token while preserving a trailing level
+    // marker (" L0"/"L 1"). File Name may carry a .ZIP/.SOR extension.
+    const cleanName = (raw: string): string => {
+      let n = raw.replace(/\.(zip|sor|msor)$/i, '').replace(/\s+/g, ' ').trim();
+      const m = n.match(/^(.*\S)\s+(L\s*\d+)$/i);
+      if (m) n = m[1].replace(/\s+/g, '') + ' ' + m[2].replace(/\s+/g, '');
+      else n = n.replace(/\s+/g, '');
+      return n;
+    };
+    for (let s = 0; s < dualSummaryIdxs.length; s++) {
+      const start = dualSummaryIdxs[s];
+      const end = s + 1 < dualSummaryIdxs.length ? dualSummaryIdxs[s + 1] : pages.length;
+      const slice = pages.slice(start, end);
+      const fileField = matchGroup(slice[0].text, /File Name\s*:\s*([^\n]+)/);
+      const notesField = matchGroup(slice[0].text, /Notes\s*:\s*([^\n]+)/);
+      let testName = `${filename}_test_${s + 1}`;
+      if (fileField && fileField.trim() && fileField.trim() !== '/') testName = cleanName(fileField);
+      else if (notesField && notesField.trim()) testName = cleanName(notesField);
+      reports.push(...parseAnritsuMt9085Dual(slice, testName));
+    }
+    return reports;
+  }
+
   const firstSummary = pages[0].text;
   const hasDual = /1310\s*nm\s+1550\s*nm/.test(firstSummary);
   if (hasDual) return parseAnritsuMt9085Dual(pages, filename);
