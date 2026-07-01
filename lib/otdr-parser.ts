@@ -1,8 +1,19 @@
 /**
- * OTDR Report Parser v8.6 - Web Edition
+ * OTDR Report Parser v8.7 - Web Edition
  * Complete port of Python OTDR Analyzer v8.0 parsing engine.
  * Supports: VIAVI (dual, single, compiled), EXFO (legacy, FTBx, iOLM),
  *           Anritsu MT9083, Anritsu MT9085 (dual + compiled single-wavelength)
+ *
+ * v8.7 Changes:
+ * - Anritsu MT9083A2 "Trace summary report" via pdf.js: the page-1 summary is
+ *   Y-scrambled (labels stranded, values displaced below, digits fragmented like
+ *   "-0.4 1 1"). Total Loss regex returned null -> results objects were never
+ *   built -> ORL/Events/Reflectance all dropped, only Length survived. Added a
+ *   fallback in parseAnritsuMt9085Dual that rejoins fragmented digits and
+ *   reconstructs Loss/Events/Length/ORL from the stacked-label block.
+ * - Reflectance: 1550 event table can sit on a continuation page with no
+ *   wavelength marker; replaced per-page keyword guess with running-wavelength
+ *   tracking, and parse event rows from RAW text (collapsing merges columns).
  *
  * v8.6 Changes:
  * - VIAVI compiled: handle single-page-per-test .msor variant where Summary,
@@ -1722,21 +1733,90 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
   mg = matchGroup(page1Text, /Calibration\s*:\s*([^\n]+)/); if (mg) report.calibration_date = mg;
 
   // Results
-  const fiberLen1310 = matchFloat(page1Text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 1);
-  const fiberLen1550 = matchFloat(page1Text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 2);
+  //
+  // Two layout variants share this parser:
+  //  (a) Clean text (pdf-parse / pdfplumber): values sit on the same line as
+  //      their label, e.g. "Total Loss -0.411 -0.778".
+  //  (b) pdf.js Y-grouped text on the "Trace summary report" (MT9083A2) format:
+  //      the summary is SHATTERED. Labels get stranded on their own lines and
+  //      values are displaced below, with digits fragmented across items, e.g.
+  //          Total Loss            <- label only
+  //          Total Events          <- label only
+  //          -0.4 1 1              <- 1310 loss (== -0.411)
+  //          2                     <- 1310 events
+  //          -0. 7 7 8             <- 1550 loss (== -0.778)
+  //          2                     <- 1550 events
+  //      Fiber Length ("1 7 0 ft") and ORL ("45.6 2 9 dB") fragment too.
+  // We try (a) first; if the primary loss regex yields nothing we reconstruct
+  // via (b). collapseNums rejoins spaces that sit *between* digits/dots, which
+  // is safe for the one-value-per-line summary but must NOT be used on the
+  // multi-column event table (it would merge "1  0" -> "10").
+  const collapseNums = (s: string): string => s.replace(/([\d.])\s+(?=[\d.])/g, '$1');
+
+  let fiberLen1310 = matchFloat(page1Text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 1);
+  let fiberLen1550 = matchFloat(page1Text, /Fiber\s+Length\s+([\d.]+)\s*ft\s+([\d.]+)\s*ft/, 2);
+
+  // dB suffix is OPTIONAL: MT9085 prints "Total Loss x dB y dB"; MT9083A2
+  // trace-summary prints bare "Total Loss 0.598 0.016". Loss may be negative.
+  let loss1310 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1);
+  let loss1550 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2);
+  let ev1310 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 1) || 0;
+  let ev1550 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 2) || 0;
+  let orl1310 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1) || 0;
+  let orl1550 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2) || 0;
+
+  // ── pdf.js-scramble fallback (variant b) ──
+  // Triggered when the primary Total Loss regex found nothing on one line.
+  if (loss1310 === null) {
+    const lines = page1Text.split('\n').map((l) => collapseNums(l).trim());
+
+    // Fiber Length: e.g. "Fiber Length 170 ft 170 ft" (post-collapse)
+    if (fiberLen1310 === null) {
+      const flLine = lines.find((l) => /Fiber\s+Length/i.test(l));
+      if (flLine) {
+        const m = flLine.match(/([\d.]+)\s*ft(?:\s+([\d.]+)\s*ft)?/);
+        if (m) {
+          fiberLen1310 = parseFloat(m[1]);
+          fiberLen1550 = m[2] ? parseFloat(m[2]) : parseFloat(m[1]);
+        }
+      }
+    }
+
+    // Loss + Events: walk the region between the stranded "Total Loss" label
+    // and the ORL line, collecting decimals as losses and integers as events
+    // in document order. Column order on this format is 1310 then 1550.
+    const tlIdx = lines.findIndex((l) => /^Total\s+Loss$/i.test(l));
+    const orlIdx = lines.findIndex((l) => /^ORL\b/i.test(l));
+    if (tlIdx >= 0) {
+      const end = orlIdx > tlIdx ? orlIdx : lines.length;
+      const losses: number[] = [];
+      const events: number[] = [];
+      for (let li = tlIdx + 1; li < end; li++) {
+        const t = lines[li];
+        if (!t || /^Total\s+Events$/i.test(t)) continue;
+        if (/^-?\d+\.\d+$/.test(t)) losses.push(parseFloat(t));
+        else if (/^\d+$/.test(t)) events.push(parseInt(t, 10));
+      }
+      if (losses.length >= 1) loss1310 = losses[0];
+      if (losses.length >= 2) loss1550 = losses[1];
+      if (events.length >= 1) ev1310 = events[0];
+      if (events.length >= 2) ev1550 = events[1];
+    }
+
+    // ORL: e.g. "ORL 45.629 dB 46.872 dB" (post-collapse)
+    if (orlIdx >= 0) {
+      const m = lines[orlIdx].match(/ORL\s+(-?[\d.]+)\s*dB\s+(-?[\d.]+)\s*dB/);
+      if (m) {
+        orl1310 = parseFloat(m[1]);
+        orl1550 = parseFloat(m[2]);
+      }
+    }
+  }
+
   if (fiberLen1310 !== null && fiberLen1550 !== null) {
     report.link_length_ft = Math.max(fiberLen1310, fiberLen1550);
     report.highest_fiber_end_ft = report.link_length_ft;
   }
-
-  // dB suffix is OPTIONAL: MT9085 prints "Total Loss x dB y dB"; MT9083A2
-  // trace-summary prints bare "Total Loss 0.598 0.016". Loss may be negative.
-  const loss1310 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1);
-  const loss1550 = matchFloat(page1Text, /Total\s+Loss\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2);
-  const ev1310 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 1) || 0;
-  const ev1550 = matchInt(page1Text, /Total\s+Events\s+(\d+)\s+(\d+)/, 2) || 0;
-  const orl1310 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 1) || 0;
-  const orl1550 = matchFloat(page1Text, /ORL\s+([\d.\-]+)(?:\s*dB)?\s+([\d.\-]+)(?:\s*dB)?/, 2) || 0;
 
   if (page1Text.includes('PASS')) report.overall_result = 'PASS';
   else if (page1Text.includes('FAIL')) report.overall_result = 'FAIL';
@@ -1756,34 +1836,40 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
     };
   }
 
-  // Event tables for reflectance
+  // Event tables for reflectance.
+  // Wavelength attribution: the 1550 event table can live on a continuation
+  // page carrying NO "1550 nm"/"1310 nm" marker, so a per-page keyword guess
+  // misfires. Instead track the current wavelength as we walk pages in order:
+  // a dedicated 1310 page sets 1310, a 1550 page (or "OTDR Trace") sets 1550,
+  // and any event table inherits whatever was last seen.
+  // Event-table rows are NOT space-fragmented, so parse them from RAW text —
+  // collapsing here would merge "1  0" into "10" and shift every column.
   const eventRefl1310: [number, number][] = [];
   const eventRefl1550: [number, number][] = [];
+  let curWl: 1310 | 1550 | null = null;
   for (let pi = 0; pi < pages.length; pi++) {
     const pageText = pages[pi].text;
-    if (!pageText.includes('Event Table')) continue;
-    const is1310 = pageText.includes('1310 nm') || pi === 1;
-    const is1550 = pageText.includes('OTDR Trace') || pi === 2;
-    const pLines = pageText.split('\n');
-    let inEt = false;
+    const has1310 = /1310\s*nm/.test(pageText);
+    const has1550 = /1550\s*nm/.test(pageText);
+    if (has1310 && !has1550) curWl = 1310;
+    else if (has1550 && !has1310) curWl = 1550;
+    else if (/OTDR\s+Trace/.test(pageText)) curWl = 1550;
+    else if (pi === 1 && curWl === null) curWl = 1310;
 
-    for (const line of pLines) {
-      if (line.includes('Event Table')) { inEt = true; continue; }
-      if (inEt) {
-        if (line.includes('Pass/Fail') || line.includes('Thresholds')) break;
-        const evMatch = line.match(/^\s*(\d+)\s+([\d.]+)\s+.*?(-?[\d.]+)\s+(-[\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-        if (evMatch) {
-          const eventNum = parseInt(evMatch[1]);
-          const refl = parseFloat(evMatch[4]);
-          if (is1310 && !is1550) eventRefl1310.push([eventNum, refl]);
-          else if (is1550) eventRefl1550.push([eventNum, refl]);
-        } else {
-          const feMatch = line.match(/Fiber\s+End\s+(-[\d.]+)/);
-          if (feMatch) {
-            const refl = parseFloat(feMatch[1]);
-            if (is1310 && !is1550) eventRefl1310.push([eventRefl1310.length + 1, refl]);
-            else if (is1550) eventRefl1550.push([eventRefl1550.length + 1, refl]);
-          }
+    if (!pageText.includes('Event Table')) continue;
+    const target =
+      curWl === 1310 ? eventRefl1310 : curWl === 1550 ? eventRefl1550 : null;
+    if (!target) continue;
+
+    for (const line of pageText.split('\n')) {
+      if (line.includes('Pass/Fail') || line.includes('Thresholds')) break;
+      if (line.includes('Fiber End')) continue; // excluded from peak reflectance
+      const toks = line.trim().split(/\s+/);
+      // No | Dist | Loss | Reflect | Span | Cum.Loss  → reflect is toks[3]
+      if (/^\d+$/.test(toks[0]) && toks.length >= 5) {
+        const reflect = parseFloat(toks[3]);
+        if (!isNaN(reflect) && reflect < 0) {
+          target.push([parseInt(toks[0], 10), reflect]);
         }
       }
     }
