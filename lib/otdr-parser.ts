@@ -1,8 +1,15 @@
 /**
- * OTDR Report Parser v8.7 - Web Edition
+ * OTDR Report Parser v8.8 - Web Edition
  * Complete port of Python OTDR Analyzer v8.0 parsing engine.
  * Supports: VIAVI (dual, single, compiled), EXFO (legacy, FTBx, iOLM),
  *           Anritsu MT9083, Anritsu MT9085 (dual + compiled single-wavelength)
+ *
+ * v8.8 Changes:
+ * - Single-event traces (Anritsu dual): when a trace's only event is the Fiber
+ *   End (no reflective connector event), use the fiber-end reflectance as the
+ *   reported reflectance instead of leaving it blank. Reflective events still
+ *   take precedence when present. The trailing "S" saturation flag on fiber-end
+ *   reflect values is stripped (value parsed as the bare number).
  *
  * v8.7 Changes:
  * - Anritsu MT9083A2 "Trace summary report" via pdf.js: the page-1 summary is
@@ -1848,8 +1855,16 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
   // and any event table inherits whatever was last seen.
   // Event-table rows are NOT space-fragmented, so parse them from RAW text —
   // collapsing here would merge "1  0" into "10" and shift every column.
+  //
+  // Reflective (connector) events and the Fiber End are collected separately.
+  // Normally the Fiber End is excluded from peak reflectance. But when a trace's
+  // ONLY event is the Fiber End (single-event traces), we fall back to its
+  // reflectance so the column isn't blank. The "S" (saturation) flag on the
+  // fiber-end reflect value is stripped — parsed as the bare number.
   const eventRefl1310: [number, number][] = [];
   const eventRefl1550: [number, number][] = [];
+  const fiberEnd1310: [number, number][] = [];
+  const fiberEnd1550: [number, number][] = [];
   let curWl: 1310 | 1550 | null = null;
   for (let pi = 0; pi < pages.length; pi++) {
     const pageText = pages[pi].text;
@@ -1863,11 +1878,23 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
     if (!pageText.includes('Event Table')) continue;
     const target =
       curWl === 1310 ? eventRefl1310 : curWl === 1550 ? eventRefl1550 : null;
-    if (!target) continue;
+    const feTarget =
+      curWl === 1310 ? fiberEnd1310 : curWl === 1550 ? fiberEnd1550 : null;
+    if (!target || !feTarget) continue;
 
     for (const line of pageText.split('\n')) {
       if (line.includes('Pass/Fail') || line.includes('Thresholds')) break;
-      if (line.includes('Fiber End')) continue; // excluded from peak reflectance
+      if (line.includes('Fiber End')) {
+        // Fiber End row: "1  169  Fiber End  -19.357S  169  0.547"
+        // Loss column is blank; reflect sits right after "Fiber End", with an
+        // optional trailing "S" saturation flag that we drop.
+        const m = line.match(/Fiber\s+End\s+(-?\d+(?:\.\d+)?)\s*S?/i);
+        if (m) {
+          const r = parseFloat(m[1]);
+          if (!isNaN(r) && r < 0) feTarget.push([feTarget.length + 1, r]);
+        }
+        continue;
+      }
       const toks = line.trim().split(/\s+/);
       // No | Dist | Loss | Reflect | Span | Cum.Loss  → reflect is toks[3]
       if (/^\d+$/.test(toks[0]) && toks.length >= 5) {
@@ -1879,10 +1906,21 @@ function parseAnritsuMt9085Dual(pages: PageText[], filename: string): OTDRReport
     }
   }
 
-  const hi1310 = filterReflectancePairs(eventRefl1310);
-  const hi1550 = filterReflectancePairs(eventRefl1550);
+  // Prefer reflective (connector) events; fall back to Fiber End only when the
+  // trace has no reflective event at all (single-event traces).
+  const pickReflectance = (
+    reflective: [number, number][],
+    fiberEnd: [number, number][]
+  ): number | null => {
+    const hi = filterReflectancePairs(reflective);
+    if (hi !== null) return hi;
+    return filterReflectancePairs(fiberEnd);
+  };
+  const hi1310 = pickReflectance(eventRefl1310, fiberEnd1310);
+  const hi1550 = pickReflectance(eventRefl1550, fiberEnd1550);
   if (hi1310 !== null && report.results_1310) report.results_1310.highest_reflectance_db = hi1310;
   if (hi1550 !== null && report.results_1550) report.results_1550.highest_reflectance_db = hi1550;
+
 
   // Thresholds
   for (const page of pages) {
